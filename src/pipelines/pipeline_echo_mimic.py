@@ -12,6 +12,8 @@ import math
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
 
+# kwargs ~ keyword arguments
+
 import numpy as np
 import torch
 from diffusers import DiffusionPipeline
@@ -38,7 +40,7 @@ from src.pipelines.utils import get_tensor_interpolation_method
 @dataclass
 class Audio2VideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
-
+# nghĩa là thuộc tính videos có thể là một trong số các kiểu dữ liệu được liệt kê bên trong.
 
 class Audio2VideoPipeline(DiffusionPipeline):
     _optional_components = []
@@ -78,7 +80,7 @@ class Audio2VideoPipeline(DiffusionPipeline):
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.clip_image_processor = CLIPImageProcessor()
         self.ref_image_processor = VaeImageProcessor(
-            vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
+        vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
         )
 
     def enable_vae_slicing(self):

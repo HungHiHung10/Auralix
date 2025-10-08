@@ -1,8 +1,6 @@
-#!/usr/bin/env python
-# -*- coding: UTF-8 -*-
-'''
-webui
-'''
+# Modified by https://github.com/HungHiHung10
+# Based on the original EchoMimic project (Apache License 2.0)
+# Original source: https://github.com/BadToBest/EchoMimic
 
 import os
 import random
@@ -28,20 +26,21 @@ import argparse
 import gradio as gr
 
 default_values = {
-    "width": 512,
-    "height": 512,
-    "length": 1200,
-    "seed": 420,
-    "facemask_dilation_ratio": 0.1,
-    "facecrop_dilation_ratio": 0.5,
-    "context_frames": 12,
-    "context_overlap": 3,
-    "cfg": 2.5,
-    "steps": 30,
-    "sample_rate": 16000,
-    "fps": 24,
-    "device": "cuda"
+     "width": 512,
+     "height": 512,
+     "length": 1200,
+     "seed": 420,
+     "facemask_dilation_ratio": 0.1,
+     "facecrop_dilation_ratio": 0.5,
+     "context_frames": 12,
+     "context_overlap": 3,
+     "cfg": 2.5,
+     "steps": 30,
+     "sample_rate": 16000,
+     "fps": 24,
+     "device": "cuda"
 }
+
 
 ffmpeg_path = os.getenv('FFMPEG_PATH')
 if ffmpeg_path is None:
@@ -138,69 +137,79 @@ def select_face(det_bboxes, probs):
     sorted_bboxes = sorted(filtered_bboxes, key=lambda x:(x[3]-x[1]) * (x[2] - x[0]), reverse=True)
     return sorted_bboxes[0]
 
-def process_video(uploaded_img, uploaded_audio, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device):
+########
+def process_video_safe(uploaded_img, uploaded_audio, width, height, length, seed,
+                       facemask_dilation_ratio, facecrop_dilation_ratio,
+                       context_frames, context_overlap, cfg, steps,
+                       sample_rate, fps, device):
 
-    if seed is not None and seed > -1:
-        generator = torch.manual_seed(seed)
-    else:
-        generator = torch.manual_seed(random.randint(100, 1000000))
+    # seed
+    generator = torch.manual_seed(seed) if seed is not None and seed > -1 else torch.manual_seed(random.randint(100, 1000000))
 
-    #### face musk prepare
+    if not os.path.exists(uploaded_img):
+        raise ValueError(f"Ảnh không tồn tại: {uploaded_img}")
     face_img = cv2.imread(uploaded_img)
-    face_mask = np.zeros((face_img.shape[0], face_img.shape[1])).astype('uint8')
+    if face_img is None:
+        raise ValueError(f"Không thể đọc ảnh: {uploaded_img}")
+
+    # mask
+    face_mask = np.zeros((face_img.shape[0], face_img.shape[1]), dtype='uint8')
     det_bboxes, probs = face_detector.detect(face_img)
     select_bbox = select_face(det_bboxes, probs)
-    if select_bbox is None:
-        face_mask[:, :] = 255
-    else:
-        xyxy = select_bbox[:4]
-        xyxy = np.round(xyxy).astype('int')
+
+    if select_bbox is not None:
+        xyxy = np.round(select_bbox[:4]).astype('int')
         rb, re, cb, ce = xyxy[1], xyxy[3], xyxy[0], xyxy[2]
         r_pad = int((re - rb) * facemask_dilation_ratio)
         c_pad = int((ce - cb) * facemask_dilation_ratio)
-        face_mask[rb - r_pad : re + r_pad, cb - c_pad : ce + c_pad] = 255
-        
-        #### face crop
+        face_mask[rb - r_pad: re + r_pad, cb - c_pad: ce + c_pad] = 255
+
+        # crop
         r_pad_crop = int((re - rb) * facecrop_dilation_ratio)
         c_pad_crop = int((ce - cb) * facecrop_dilation_ratio)
-        crop_rect = [max(0, cb - c_pad_crop), max(0, rb - r_pad_crop), min(ce + c_pad_crop, face_img.shape[1]), min(re + r_pad_crop, face_img.shape[0])]
+        crop_rect = [
+            max(0, cb - c_pad_crop),
+            max(0, rb - r_pad_crop),
+            min(ce + c_pad_crop, face_img.shape[1]),
+            min(re + r_pad_crop, face_img.shape[0])
+        ]
         face_img = crop_and_pad(face_img, crop_rect)
         face_mask = crop_and_pad(face_mask, crop_rect)
-        face_img = cv2.resize(face_img, (width, height))
-        face_mask = cv2.resize(face_mask, (width, height))
+        if isinstance(face_img, tuple): face_img = face_img[0]
+        if isinstance(face_mask, tuple): face_mask = face_mask[0]
 
-    ref_image_pil = Image.fromarray(face_img[:, :, [2, 1, 0]])
+    face_img = cv2.resize(face_img, (width, height))
+    face_mask = cv2.resize(face_mask, (width, height))
+
+    ref_image_pil = Image.fromarray(face_img[:, :, ::-1])
     face_mask_tensor = torch.Tensor(face_mask).to(dtype=weight_dtype, device="cuda").unsqueeze(0).unsqueeze(0).unsqueeze(0) / 255.0
-    
+
     video = pipe(
-        ref_image_pil,
-        uploaded_audio,
-        face_mask_tensor,
-        width,
-        height,
-        length,
-        steps,
-        cfg,
-        generator=generator,
-        audio_sample_rate=sample_rate,
-        context_frames=context_frames,
-        fps=fps,
+        ref_image_pil, uploaded_audio, face_mask_tensor,
+        width, height, length, steps, cfg,
+        generator=generator, audio_sample_rate=sample_rate,
+        context_frames=context_frames, fps=fps,
         context_overlap=context_overlap
     ).videos
 
     save_dir = Path("output/tmp")
     save_dir.mkdir(exist_ok=True, parents=True)
-    output_video_path = save_dir / "output_video.mp4"
+    output_video_path = save_dir / f"output_video_{random.randint(0,9999)}.mp4"
     save_videos_grid(video, str(output_video_path), n_rows=1, fps=fps)
 
     video_clip = VideoFileClip(str(output_video_path))
     audio_clip = AudioFileClip(uploaded_audio)
-    final_output_path = save_dir / "output_video_with_audio.mp4"
+    final_output_path = save_dir / f"final_video_{random.randint(0,9999)}.mp4"
     video_clip = video_clip.set_audio(audio_clip)
     video_clip.write_videofile(str(final_output_path), codec="libx264", audio_codec="aac")
 
-    return final_output_path
-  
+    video_clip.close()
+    audio_clip.close()
+
+    return str(final_output_path.resolve())
+
+
+#########
 with gr.Blocks() as demo:
     gr.Markdown('# EchoMimic')
     gr.Markdown('![]()')
@@ -228,35 +237,29 @@ with gr.Blocks() as demo:
 
     generate_button = gr.Button("Generate Video")
 
-    def generate_video(uploaded_img, uploaded_audio, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device):
-
-        final_output_path = process_video(
-            uploaded_img, uploaded_audio, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device
-        )        
-        output_video= final_output_path
-        return final_output_path
-
+    ############
     generate_button.click(
-        generate_video,
-        inputs=[
-            uploaded_img,
-            uploaded_audio,
-            width,
-            height,
-            length,
-            seed,
-            facemask_dilation_ratio,
-            facecrop_dilation_ratio,
-            context_frames,
-            context_overlap,
-            cfg,
-            steps,
-            sample_rate,
-            fps,
-            device
-        ],
-        outputs=output_video
-    )
+    fn=process_video_safe,
+    inputs=[
+        uploaded_img,
+        uploaded_audio,
+        width,
+        height,
+        length,
+        seed,
+        facemask_dilation_ratio,
+        facecrop_dilation_ratio,
+        context_frames,
+        context_overlap,
+        cfg,
+        steps,
+        sample_rate,
+        fps,
+        device
+    ],
+    outputs=gr.File(label="Download Video")
+)
+    ############
 parser = argparse.ArgumentParser(description='EchoMimic')
 parser.add_argument('--server_name', type=str, default='0.0.0.0', help='Server name')
 parser.add_argument('--server_port', type=int, default=7680, help='Server port')
@@ -266,4 +269,9 @@ args = parser.parse_args()
 
 if __name__ == '__main__':
     #demo.launch(server_name='0.0.0.0')
-    demo.launch(server_name=args.server_name, server_port=args.server_port, inbrowser=True)
+    demo.launch(server_name=args.server_name, server_port=3000, inbrowser=True, share=True)
+
+########## Notice ##########
+# This repository is a modified version of EchoMimic, originally licensed under the Apache License 2.0.  
+# Original project: https://github.com/BadToBest/EchoMimic  
+# Modified by https://github.com/HungHiHung10

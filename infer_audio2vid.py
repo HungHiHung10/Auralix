@@ -166,12 +166,12 @@ def main():
     scheduler = DDIMScheduler(**sched_kwargs)
 
     pipe = Audio2VideoPipeline(
-        vae=vae,
-        reference_unet=reference_unet,
-        denoising_unet=denoising_unet,
-        audio_guider=audio_processor,
-        face_locator=face_locator,
-        scheduler=scheduler,
+        vae=vae, # image encoder -> sd v1.5
+        reference_unet=reference_unet, # Unet2D
+        denoising_unet=denoising_unet, # EchoUnet3D
+        audio_guider=audio_processor, # audio encoder -> sd v1.5? 
+        face_locator=face_locator, # face_locator -> sd v1.5.mixin?
+        scheduler=scheduler, # sd v1.5.DDIMscheduler
     )
     pipe = pipe.to("cuda", dtype=weight_dtype)
 
