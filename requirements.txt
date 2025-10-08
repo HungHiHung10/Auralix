@@ -139,3 +139,4 @@ websockets==11.0.3
 zipp==3.23.0
 datasets 
 huggingface_hub
+xformers==0.0.25

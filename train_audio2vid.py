@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 '''
 @Project ：EchoMimic
-@File    ：train.py
+@File    ：train_audio2vid.py
 @Author  ：juzhen.czy
 @Date    ：2024/3/4 17:43 
 '''
@@ -35,7 +35,6 @@ from PIL import Image
 from moviepy.editor import VideoFileClip
 from facenet_pytorch import MTCNN
 
-# EchoMimic specific imports
 from diffusers import AutoencoderKL, DDIMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version
@@ -50,19 +49,8 @@ from src.utils.util import save_videos_grid, crop_and_pad
 from src.pipelines.context import get_context_scheduler
 from src.models.mutual_self_attention import ReferenceAttentionControl
 
-# Custom dataset for EchoMimic
 class EchoDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        video_dir: str,
-        sample_n_frames: int = 16,
-        sample_rate: int = 16000,
-        fps: int = 24,
-        sample_size: tuple = (512, 512),
-        facemusk_dilation_ratio: float = 0.1,
-        facecrop_dilation_ratio: float = 0.5,
-        device: str = "cuda",
-    ):
+    def __init__(self, video_dir, sample_n_frames=16, sample_rate=16000, fps=24, sample_size=(512, 512), facemusk_dilation_ratio=0.1, facecrop_dilation_ratio=0.5, device="cuda"):
         self.video_dir = video_dir
         self.video_paths = [os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.endswith(".mp4")]
         self.sample_n_frames = sample_n_frames
@@ -72,21 +60,14 @@ class EchoDataset(torch.utils.data.Dataset):
         self.facemusk_dilation_ratio = facemusk_dilation_ratio
         self.facecrop_dilation_ratio = facecrop_dilation_ratio
         self.device = device
-
-        # Initialize face detector and audio processor
-        self.face_detector = MTCNN(
-            image_size=320, margin=0, min_face_size=20,
-            thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, device=device
-        )
-        self.audio_processor = load_audio_model(model_path="/content/EchoMimic/tiny.pt", device=device)  # Adjust path
+        self.face_detector = MTCNN(image_size=320, margin=0, min_face_size=20, thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, device=device)
+        self.audio_processor = load_audio_model(model_path="tiny", device=device)
 
     def __len__(self):
         return len(self.video_paths)
 
     def __getitem__(self, idx):
         video_path = self.video_paths[idx]
-
-        # Load video frames
         cap = cv2.VideoCapture(video_path)
         frames = []
         while len(frames) < self.sample_n_frames:
@@ -101,21 +82,17 @@ class EchoDataset(torch.utils.data.Dataset):
         if len(frames) < self.sample_n_frames:
             frames += [frames[-1]] * (self.sample_n_frames - len(frames))
 
-        pixel_values = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).float() / 127.5 - 1.0  # Normalize to [-1, 1]
+        pixel_values = torch.from_numpy(np.stack(frames)).permute(0, 3, 1, 2).to(dtype=torch.float32) / 127.5 - 1.0
 
-        # Reference image: first frame
         ref_image = Image.fromarray(frames[0])
-
-        # Extract audio from video
         video_clip = VideoFileClip(video_path)
         audio_path = f"temp_audio_{idx}.wav"
         video_clip.audio.write_audiofile(audio_path, codec="pcm_s16le", fps=self.sample_rate)
         whisper_feature = self.audio_processor.audio2feat(audio_path)
         whisper_chunks = self.audio_processor.feature2chunks(whisper_feature, fps=self.fps)
-        audio_features = torch.from_numpy(whisper_chunks).float()[:self.sample_n_frames]  # Truncate to video length
+        audio_features = torch.from_numpy(whisper_chunks).to(dtype=torch.float32)[:self.sample_n_frames]
         os.remove(audio_path)
 
-        # Face mask from reference image
         face_img = np.array(ref_image)
         face_mask = np.zeros((face_img.shape[0], face_img.shape[1]), dtype=np.uint8)
         det_bboxes, probs = self.face_detector.detect(face_img)
@@ -126,7 +103,6 @@ class EchoDataset(torch.utils.data.Dataset):
             r_pad = int((re - rb) * self.facemusk_dilation_ratio)
             c_pad = int((ce - cb) * self.facemusk_dilation_ratio)
             face_mask[rb - r_pad:re + r_pad, cb - c_pad:ce + c_pad] = 255
-
             r_pad_crop = int((re - rb) * self.facecrop_dilation_ratio)
             c_pad_crop = int((ce - cb) * self.facecrop_dilation_ratio)
             crop_rect = [
@@ -138,13 +114,13 @@ class EchoDataset(torch.utils.data.Dataset):
             face_img = cv2.resize(face_img, self.sample_size)
             face_mask = cv2.resize(face_mask, self.sample_size)
 
-        face_mask_tensor = torch.from_numpy(face_mask).float().unsqueeze(0).unsqueeze(0) / 255.0  # (1, 1, H, W)
+        face_mask_tensor = torch.from_numpy(face_mask).to(dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
 
         return {
-            "pixel_values": pixel_values,  # (F, C, H, W)
-            "ref_image": torchvision.transforms.ToTensor()(ref_image) * 2.0 - 1.0,
-            "audio_features": audio_features,  # (F, feat_dim)
-            "face_mask_tensor": face_mask_tensor,  # (1, 1, H, W)
+            "pixel_values": pixel_values,
+            "ref_image": torchvision.transforms.ToTensor()(ref_image).to(dtype=torch.float32) * 2.0 - 1.0,
+            "audio_features": audio_features,
+            "face_mask_tensor": face_mask_tensor,
         }
 
 def select_face(det_bboxes, probs):
@@ -183,7 +159,6 @@ def init_dist(launcher="pytorch", backend="nccl", port=29500, **kwargs):
         dist.init_process_group(backend=backend)
         return local_rank
     elif launcher == "none":
-        # Single GPU or CPU
         return 0
     else:
         raise NotImplementedError(f"Not implemented launcher type: `{launcher}`!")
@@ -222,8 +197,8 @@ def main(
     gradient_checkpointing: bool = True,
     checkpointing_epochs: int = 5,
     checkpointing_steps: int = -1,
-    mixed_precision_training: bool = True,  # Bật mixed precision
-    enable_xformers_memory_efficient_attention: bool = True,  # Bật xformers nếu có
+    mixed_precision_training: bool = False,  # Sửa: Tắt mixed precision
+    enable_xformers_memory_efficient_attention: bool = True,
     global_seed: int = 42,
     is_debug: bool = False,
     noise_scheduler_kwargs: Dict = {},
@@ -231,7 +206,6 @@ def main(
 ):
     check_min_version("0.10.0.dev0")
 
-    # Initialize distributed training
     local_rank = init_dist(launcher=launcher)
     global_rank = dist.get_rank() if dist.is_initialized() else 0
     num_processes = dist.get_world_size() if dist.is_initialized() else 1
@@ -240,13 +214,11 @@ def main(
     seed = global_seed + global_rank
     torch.manual_seed(seed)
 
-    # Logging folder
     folder_name = "debug" if is_debug else name + datetime.datetime.now().strftime("-%Y-%m-%dT%H-%M-%S")
     output_dir = os.path.join(output_dir, folder_name)
     if is_debug and os.path.exists(output_dir):
         os.system(f"rm -rf {output_dir}")
 
-    # Logging configuration
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -256,7 +228,6 @@ def main(
     if is_main_process and not is_debug and use_wandb:
         wandb.init(project="echomimic", name=folder_name)
 
-    # Create output directories
     if is_main_process:
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(f"{output_dir}/samples", exist_ok=True)
@@ -264,22 +235,17 @@ def main(
         os.makedirs(f"{output_dir}/checkpoints", exist_ok=True)
         OmegaConf.save(OmegaConf.create(locals()), os.path.join(output_dir, 'config.yaml'))
 
-    # Load scheduler and models
     noise_scheduler = DDIMScheduler(**noise_scheduler_kwargs)
-    weight_dtype = torch.float16 if mixed_precision_training else torch.float32
+    weight_dtype = torch.float32  # Sửa: Dùng float32
 
-    # VAE
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(dtype=torch.float32, device=device)
-
-    # Reference UNet
     reference_unet = EchoUNet2DConditionModel.from_pretrained(
         pretrained_model_path, subfolder="unet"
     ).to(dtype=weight_dtype, device=device)
     if reference_unet_path:
-        reference_unet.load_state_dict(torch.load(reference_unet_path, map_location="cpu"))
+        reference_unet.load_state_dict(torch.load(reference_unet_path, map_location="cpu"), strict=False)
 
-    # Denoising UNet
     denoising_unet = EchoUNet3DConditionModel.from_pretrained_2d(
         pretrained_model_path,
         motion_module_path if motion_module_path else "",
@@ -289,7 +255,6 @@ def main(
     if denoising_unet_path:
         denoising_unet.load_state_dict(torch.load(denoising_unet_path, map_location="cpu"), strict=False)
 
-    # Face Locator
     face_locator = FaceLocator(320, conditioning_channels=1, block_out_channels=(16, 32, 96, 256)).to(
         dtype=weight_dtype, device=device
     )
@@ -297,10 +262,8 @@ def main(
         face_locator.load_state_dict(torch.load(face_locator_path, map_location="cpu"))
     face_locator.requires_grad_(False)
 
-    # Audio Processor
     audio_guider = load_audio_model(model_path=audio_model_path, device=device)
 
-    # Set trainable parameters for reference_unet and denoising_unet
     reference_unet.requires_grad_(False)
     denoising_unet.requires_grad_(True)
     trainable_params = []
@@ -329,19 +292,16 @@ def main(
         print(f"trainable params number: {len(trainable_params)}")
         print(f"trainable params scale: {sum(p.numel() for p in trainable_params) / 1e6:.3f} M")
 
-    # Bật xformers nếu có sẵn
     if enable_xformers_memory_efficient_attention and is_xformers_available():
         denoising_unet.enable_xformers_memory_efficient_attention()
         reference_unet.enable_xformers_memory_efficient_attention()
     else:
         logging.warning("xformers not available, disabling memory efficient attention.")
 
-    # Enable gradient checkpointing
     if gradient_checkpointing:
         reference_unet.enable_gradient_checkpointing()
         denoising_unet.enable_gradient_checkpointing()
 
-    # Dataset and DataLoader
     train_dataset = EchoDataset(**train_data)
     train_sampler = DistributedSampler(train_dataset) if dist.is_initialized() else None
     train_dataloader = torch.utils.data.DataLoader(
@@ -354,7 +314,6 @@ def main(
         drop_last=True,
     )
 
-    # Training iterations
     if max_train_steps == -1:
         assert max_train_epoch != -1
         max_train_steps = max_train_epoch * len(train_dataloader)
@@ -372,7 +331,6 @@ def main(
         num_training_steps=max_train_steps * gradient_accumulation_steps,
     )
 
-    # Validation pipeline
     validation_pipeline = Audio2VideoPipeline(
         vae=vae,
         reference_unet=reference_unet,
@@ -382,12 +340,10 @@ def main(
         scheduler=noise_scheduler,
     ).to(device)
 
-    # Wrap models with DDP if distributed
     if dist.is_initialized():
         reference_unet = DDP(reference_unet, device_ids=[local_rank])
         denoising_unet = DDP(denoising_unet, device_ids=[local_rank])
 
-    # Training loop
     total_batch_size = train_batch_size * num_processes * gradient_accumulation_steps
     if is_main_process:
         logging.info("***** Running training *****")
@@ -405,44 +361,40 @@ def main(
         denoising_unet.train()
 
         for step, batch in enumerate(train_dataloader):
-            # Batch: pixel_values (b f c h w), ref_image (b PIL), audio_features (b f feat), face_mask_tensor (b 1 1 h w)
-            pixel_values = batch["pixel_values"].to(device)  # (b, f, c, h, w)
-            ref_images = batch["ref_image"].to(device)  # (b, c, h, w) - đã là tensor
-            audio_features = batch["audio_features"].to(device)  # (b, f, feat_dim)
-            face_mask_tensors = batch["face_mask_tensor"].to(device)  # (b, 1, 1, h, w)
+            pixel_values = batch["pixel_values"].to(device, dtype=weight_dtype)
+            ref_images = batch["ref_image"].to(device, dtype=weight_dtype)
+            audio_features = batch["audio_features"].to(device, dtype=weight_dtype)
+            face_mask_tensors = batch["face_mask_tensor"].to(device, dtype=weight_dtype)
 
-            # Encode video to latents
             with torch.no_grad():
                 video_length = pixel_values.shape[1]
                 pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-                video_latents = vae.encode(pixel_values.to(vae.dtype)).latent_dist.sample() * vae.config.scaling_factor
+                video_latents = vae.encode(pixel_values.to(dtype=torch.float32)).latent_dist.sample() * vae.config.scaling_factor
+                video_latents = video_latents.to(dtype=weight_dtype)
                 video_latents = rearrange(video_latents, "(b f) c h w -> b c f h w", f=video_length)
 
-            # Encode ref_image to latents
             with torch.no_grad():
-                ref_image_latents = vae.encode(ref_images).latent_dist.sample() * vae.config.scaling_factor  # (b, 4, h/8, w/8)
+                ref_image_latents = vae.encode(ref_images.to(dtype=torch.float32)).latent_dist.sample() * vae.config.scaling_factor
+                ref_image_latents = ref_image_latents.to(dtype=weight_dtype)
 
-            # Face locator features
-            c_face_locator_tensors = face_locator(face_mask_tensors.to(dtype=weight_dtype))  # (b, c, h, w)
+            c_face_locator_tensors = face_locator(face_mask_tensors.to(dtype=weight_dtype))
 
-            # Sample noise and timestep
             noise = torch.randn_like(video_latents)
             bsz = video_latents.shape[0]
-            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=device).long()
+            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=device).long()
+            timesteps = timesteps.to(dtype=weight_dtype)
             noisy_latents = noise_scheduler.add_noise(video_latents, noise, timesteps)
 
-            # Reference control
             reference_control_writer = ReferenceAttentionControl(reference_unet, mode="write", batch_size=bsz)
             reference_control_reader = ReferenceAttentionControl(denoising_unet, mode="read", batch_size=bsz)
             reference_unet(
                 ref_image_latents,
-                torch.zeros_like(timesteps).to(dtype=weight_dtype),
+                timesteps.to(dtype=weight_dtype),
                 encoder_hidden_states=None,
                 return_dict=False,
             )
             reference_control_reader.update(reference_control_writer)
 
-            # Predict noise
             model_pred = denoising_unet(
                 noisy_latents,
                 timesteps,
@@ -462,11 +414,9 @@ def main(
             progress_bar.update(1)
             global_step += 1
 
-            # Logging
             if is_main_process and use_wandb:
                 wandb.log({"train_loss": loss.item()}, step=global_step)
 
-            # Save checkpoint
             if is_main_process and (global_step % checkpointing_steps == 0 or step == len(train_dataloader) - 1):
                 save_path = os.path.join(output_dir, "checkpoints")
                 state_dict = {
@@ -478,20 +428,18 @@ def main(
                 torch.save(state_dict, os.path.join(save_path, f"checkpoint-epoch-{epoch+1}.ckpt"))
                 logging.info(f"Saved state to {save_path}")
 
-            # Validation
             if is_main_process and (global_step % validation_steps == 0 or global_step in validation_steps_tuple):
                 samples = []
                 generator = torch.Generator(device=device).manual_seed(global_seed)
                 for idx, val_data in enumerate(validation_data.get("samples", [])[:2]):
                     ref_image_pil = Image.open(val_data["ref_image_path"])
                     audio_path = val_data["audio_path"]
-                    face_mask_tensor = torch.load(val_data["face_mask_path"]).to(device) / 255.0
+                    face_mask_tensor = torch.load(val_data["face_mask_path"]).to(device, dtype=weight_dtype) / 255.0
 
-                    # Đảm bảo đúng dạng [B, C, F, H, W]
-                    if face_mask_tensor.ndim == 4:   # [B, C, H, W]
-                        face_mask_tensor = face_mask_tensor.unsqueeze(2)  # thêm chiều F=1
-                    elif face_mask_tensor.ndim == 6: # [B, C, 1, F, H, W] (bị thừa 1 chiều)
-                        face_mask_tensor = face_mask_tensor.squeeze(2)    # bỏ bớt chiều thừa
+                    if face_mask_tensor.ndim == 4:
+                        face_mask_tensor = face_mask_tensor.unsqueeze(2)
+                    elif face_mask_tensor.ndim == 6:
+                        face_mask_tensor = face_mask_tensor.squeeze(2)
 
                     video = validation_pipeline(
                         ref_image_pil,

@@ -10,9 +10,9 @@ audio_model_path: "./pretrained_weights/tiny.pt"
 
 train_data:
   video_dir: "./HDTF_clips/clips"
-  sample_n_frames: 4
+  sample_n_frames: 24
   sample_rate: 16000
-  fps: 6
+  fps: 25
   sample_size: [512, 512]        # [H, W]
   facemusk_dilation_ratio: 0.1
   facecrop_dilation_ratio: 0.5
@@ -28,9 +28,9 @@ validation_data:
       face_mask_path: "./assets/mask2.pt"
 
 # training hyper-params
-max_train_epoch: -1
-max_train_steps: 1            # default bạn chỉnh trong main là 100
-validation_steps: 1
+max_train_epoch: 10
+max_train_steps: 10           # default bạn chỉnh trong main là 100
+validation_steps: 10
 validation_steps_tuple: [ -1 ]  # có thể thêm các giá trị cụ thể: [500, 1000]
 learning_rate: 3e-5
 scale_lr: false
@@ -60,7 +60,7 @@ is_debug: false
 
 # scheduler + unet extra kwargs (nếu cần)
 noise_scheduler_kwargs:
-  num_train_timesteps: 1000
+  num_train_timesteps: 100
   beta_start: 0.00085
   beta_end: 0.012
   beta_schedule: "scaled_linear"
