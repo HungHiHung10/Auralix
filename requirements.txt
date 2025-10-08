@@ -1,5 +1,5 @@
 absl-py==2.3.1
-accelerate==0.26.0
+# accelerate==0.26.0
 aiofiles==23.2.1
 altair==5.5.0
 annotated-types==0.7.0
@@ -139,4 +139,4 @@ websockets==11.0.3
 zipp==3.23.0
 datasets 
 huggingface_hub
-xformers==0.0.25
+# xformers==0.0.25
