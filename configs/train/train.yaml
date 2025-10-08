@@ -1,0 +1,71 @@
+output_dir: "./outputs"
+pretrained_model_path: "./pretrained_weights/sd-image-variations-diffusers"
+inference_config_path: "./configs/inference/inference_v1.yaml"
+
+motion_module_path: "./pretrained_weights/motion_module.pth"          
+reference_unet_path: "./pretrained_weights/reference_unet.pth"         
+denoising_unet_path: "./pretrained_weights/denoising_unet.pth"         
+face_locator_path: "./pretrained_weights/face_locator.pth"             
+audio_model_path: "./pretrained_weights/tiny.pt"
+
+train_data:
+  video_dir: "./HDTF_clips/clips"
+  sample_n_frames: 4
+  sample_rate: 16000
+  fps: 6
+  sample_size: [512, 512]        # [H, W]
+  facemusk_dilation_ratio: 0.1
+  facecrop_dilation_ratio: 0.5
+  device: "cuda"
+
+validation_data:
+  samples:
+    - ref_image_path: "./assets/test_imgs/a.png"
+      audio_path: "./assets/test_audios/chunnuanhuakai.wav"
+      face_mask_path: "./assets/mask1.pt"
+    - ref_image_path: "./assets/test_imgs/b.png"
+      audio_path: "./assets/test_audios/echomimic_en.wav"
+      face_mask_path: "./assets/mask2.pt"
+
+# training hyper-params
+max_train_epoch: -1
+max_train_steps: 1            # default bạn chỉnh trong main là 100
+validation_steps: 1
+validation_steps_tuple: [ -1 ]  # có thể thêm các giá trị cụ thể: [500, 1000]
+learning_rate: 3e-5
+scale_lr: false
+lr_warmup_steps: 0
+lr_scheduler: "constant"
+
+trainable_modules: ["attn1", "attn2", "temporal_attentions"]
+
+num_workers: 0
+train_batch_size: 1
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_weight_decay: 0.01
+adam_epsilon: 1e-08
+max_grad_norm: 1.0
+gradient_accumulation_steps: 1
+gradient_checkpointing: true
+
+checkpointing_epochs: 1
+checkpointing_steps: 1
+
+mixed_precision_training: true
+enable_xformers_memory_efficient_attention: false
+
+global_seed: 42
+is_debug: false
+
+# scheduler + unet extra kwargs (nếu cần)
+noise_scheduler_kwargs:
+  num_train_timesteps: 1000
+  beta_start: 0.00085
+  beta_end: 0.012
+  beta_schedule: "scaled_linear"
+
+unet_additional_kwargs:
+  cross_attention_dim: 384
+  block_out_channels: [320, 640, 1280, 1280]   # vẫn giữ như backbone SD
+  unet_use_temporal_attention: true
