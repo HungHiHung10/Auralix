@@ -3,7 +3,6 @@
 '''
 @Project ：EchoMimic
 @File    ：train_audio2vid.py
-@Author  ：juzhen.czy
 @Date    ：2024/3/4 17:43 
 '''
 import os
@@ -49,7 +48,7 @@ from src.utils.util import save_videos_grid, crop_and_pad
 from src.pipelines.context import get_context_scheduler
 from src.models.mutual_self_attention import ReferenceAttentionControl
 
-class EchoDataset(torch.utils.data.Dataset):
+class AuralixDataset(torch.utils.data.Dataset):
     def __init__(self, video_dir, sample_n_frames=16, sample_rate=16000, fps=24, sample_size=(512, 512), facemusk_dilation_ratio=0.1, facecrop_dilation_ratio=0.5, device="cuda"):
         self.video_dir = video_dir
         self.video_paths = [os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.endswith(".mp4")]
@@ -302,7 +301,7 @@ def main(
         reference_unet.enable_gradient_checkpointing()
         denoising_unet.enable_gradient_checkpointing()
 
-    train_dataset = EchoDataset(**train_data)
+    train_dataset = AuralixDataset(**train_data)
     train_sampler = DistributedSampler(train_dataset) if dist.is_initialized() else None
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -433,8 +432,34 @@ def main(
                 for idx, val_data in enumerate(validation_data.get("samples", [])[:2]):
                     ref_image_pil = Image.open(val_data["ref_image_path"])
                     audio_path = val_data["audio_path"]
-                    face_mask_tensor = torch.load(val_data["face_mask_path"]).to(device, dtype=weight_dtype) / 255.0
+                    
+                    # Tạo mặt nạ động thay vì tải từ file
+                    face_img = cv2.imread(val_data["ref_image_path"])
+                    face_mask = np.zeros((face_img.shape[0], face_img.shape[1]), dtype=np.uint8)
+                    det_bboxes, probs = train_dataset.face_detector.detect(face_img)
+                    select_bbox = select_face(det_bboxes, probs)
+                    if select_bbox is not None:
+                        xyxy = np.round(select_bbox[:4]).astype(int)
+                        rb, re, cb, ce = xyxy[1], xyxy[3], xyxy[0], xyxy[2]
+                        r_pad = int((re - rb) * train_data["facemusk_dilation_ratio"])
+                        c_pad = int((ce - cb) * train_data["facemusk_dilation_ratio"])
+                        face_mask[rb - r_pad:re + r_pad, cb - c_pad:ce + c_pad] = 255
+                        r_pad_crop = int((re - rb) * train_data["facecrop_dilation_ratio"])
+                        c_pad_crop = int((ce - cb) * train_data["facecrop_dilation_ratio"])
+                        crop_rect = [
+                            max(0, cb - c_pad_crop), max(0, rb - r_pad_crop),
+                            min(ce + c_pad_crop, face_img.shape[1]), min(re + r_pad_crop, face_img.shape[0])
+                        ]
+                        face_img, _ = crop_and_pad(face_img, crop_rect)
+                        face_mask, _ = crop_and_pad(face_mask, crop_rect)
+                        face_img = cv2.resize(face_img, train_data["sample_size"])
+                        face_mask = cv2.resize(face_mask, train_data["sample_size"])
+                    else:
+                        face_mask[:, :] = 255  # Nếu không phát hiện khuôn mặt, sử dụng toàn bộ ảnh
+                    face_mask_tensor = torch.from_numpy(face_mask).to(dtype=weight_dtype, device=device).unsqueeze(0).unsqueeze(0) / 255.0
+                    logging.info(f"Validation face mask tensor shape: {face_mask_tensor.shape}, min: {face_mask_tensor.min()}, max: {face_mask_tensor.max()}")
 
+                    # Đảm bảo tensor có đúng số chiều
                     if face_mask_tensor.ndim == 4:
                         face_mask_tensor = face_mask_tensor.unsqueeze(2)
                     elif face_mask_tensor.ndim == 6:
