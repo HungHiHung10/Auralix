@@ -61,7 +61,7 @@ class EchoDataset(torch.utils.data.Dataset):
         self.facecrop_dilation_ratio = facecrop_dilation_ratio
         self.device = device
         self.face_detector = MTCNN(image_size=320, margin=0, min_face_size=20, thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True, device=device)
-        self.audio_processor = load_audio_model(model_path="tiny", device=device)
+        self.audio_processor = load_audio_model(model_path="small", device=device)
 
     def __len__(self):
         return len(self.video_paths)
