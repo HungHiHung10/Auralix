@@ -197,7 +197,7 @@ def main(
     gradient_checkpointing: bool = True,
     checkpointing_epochs: int = 5,
     checkpointing_steps: int = -1,
-    mixed_precision_training: bool = False,  # Sửa: Tắt mixed precision
+    mixed_precision_training: bool = False,
     enable_xformers_memory_efficient_attention: bool = True,
     global_seed: int = 42,
     is_debug: bool = False,
@@ -236,7 +236,7 @@ def main(
         OmegaConf.save(OmegaConf.create(locals()), os.path.join(output_dir, 'config.yaml'))
 
     noise_scheduler = DDIMScheduler(**noise_scheduler_kwargs)
-    weight_dtype = torch.float32  # Sửa: Dùng float32
+    weight_dtype = torch.float32
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(dtype=torch.float32, device=device)
@@ -382,14 +382,13 @@ def main(
             noise = torch.randn_like(video_latents)
             bsz = video_latents.shape[0]
             timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=device).long()
-            timesteps = timesteps.to(dtype=weight_dtype)
             noisy_latents = noise_scheduler.add_noise(video_latents, noise, timesteps)
 
             reference_control_writer = ReferenceAttentionControl(reference_unet, mode="write", batch_size=bsz)
             reference_control_reader = ReferenceAttentionControl(denoising_unet, mode="read", batch_size=bsz)
             reference_unet(
                 ref_image_latents,
-                timesteps.to(dtype=weight_dtype),
+                timesteps,
                 encoder_hidden_states=None,
                 return_dict=False,
             )
