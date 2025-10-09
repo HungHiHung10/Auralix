@@ -488,10 +488,24 @@ class EchoUNet3DConditionModel(ModelMixin, ConfigMixin):
             emb = emb + class_emb
 
         # pre-process
+        # sample = self.conv_in(sample)
+        # if face_musk_fea is not None:
+        #     # print(sample.shape, face_musk_fea.shape)
+        #     sample = sample + face_musk_fea
+
+        import torch.nn.functional as F
+        
         sample = self.conv_in(sample)
         if face_musk_fea is not None:
-            # print(sample.shape, face_musk_fea.shape)
+            if face_musk_fea.shape[-3:] != sample.shape[-3:]:
+                face_musk_fea = F.interpolate(
+                    face_musk_fea,
+                    size=sample.shape[-3:],  # (T, H, W)
+                    mode="trilinear",
+                    align_corners=False
+                )
             sample = sample + face_musk_fea
+
 
         # down
         down_block_res_samples = (sample,)
